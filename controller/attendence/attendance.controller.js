@@ -3,6 +3,342 @@ const { Op } = require("sequelize");
 const Employee = require("../../models/employee/employee.model");
 const Attendance = require("../../models/attendence/attendance.model");
 
+
+
+
+
+
+
+
+// Add these helper functions at the top of your controller file (after requires)
+const getLocalDate = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getLocalTime = () => {
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+};
+
+//! Employee self check-in (FIXED with local timezone)
+const selfCheckIn = async (req, res, next) => {
+  try {
+    const { note, location, deviceInfo, ipAddress } = req.body;
+    const employeeId = req.user?.employeeId || req.user?.id;
+    const userId = req.user?.id;
+    const today = getLocalDate(); // Changed from UTC to local
+    const currentTime = getLocalTime(); // Changed from UTC to local
+
+    if (!employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: "Employee information not found!",
+      });
+    }
+
+    // Check if employee exists
+    const employee = await Employee.findByPk(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee not found!",
+      });
+    }
+
+    // Check if attendance already exists for today
+    let attendance = await Attendance.findOne({
+      where: {
+        employeeId,
+        date: today,
+      },
+    });
+
+    if (attendance) {
+      // Check if already checked in
+      if (attendance.checkIn) {
+        return res.status(400).json({
+          success: false,
+          message: "You have already checked in today!",
+          data: attendance,
+        });
+      }
+
+      // Update existing record with check-in
+      await attendance.update({
+        checkIn: currentTime,
+        checkInNote: note || null,
+        location: location || null,
+        ipAddress: ipAddress || null,
+        deviceInfo: deviceInfo || null,
+        status: "present",
+        markedBy: userId,
+        markedByRole: "employee",
+      });
+    } else {
+      // Create new attendance record
+      attendance = await Attendance.create({
+        employeeId,
+        date: today,
+        status: "present",
+        checkIn: currentTime,
+        checkInNote: note || null,
+        location: location || null,
+        ipAddress: ipAddress || null,
+        deviceInfo: deviceInfo || null,
+        markedBy: userId,
+        markedByRole: "employee",
+      });
+    }
+
+    // Fetch updated attendance with employee info separately
+    const updatedAttendance = await Attendance.findByPk(attendance.id);
+    
+    return res.status(200).json({
+      success: true,
+      message: "Check-in successful!",
+      data: {
+        ...updatedAttendance.toJSON(),
+        employee: {
+          id: employee.id,
+          name: employee.name,
+          employeeId: employee.employeeId,
+          designation: employee.designation,
+          department: employee.department,
+          shift: employee.shift,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error during check-in:", error);
+    next(error);
+  }
+};
+
+//! Employee self check-out (FIXED with local timezone)
+const selfCheckOut = async (req, res, next) => {
+  try {
+    const { note, location, deviceInfo, ipAddress } = req.body;
+    const employeeId = req.user?.employeeId || req.user?.id;
+    const userId = req.user?.id;
+    const today = getLocalDate(); // Changed from UTC to local
+    const currentTime = getLocalTime(); // Changed from UTC to local
+
+    if (!employeeId) {
+      return res.status(400).json({
+        success: false,
+        message: "Employee information not found!",
+      });
+    }
+
+    // Check if employee exists
+    const employee = await Employee.findByPk(employeeId);
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee not found!",
+      });
+    }
+
+    // Find today's attendance
+    const attendance = await Attendance.findOne({
+      where: {
+        employeeId,
+        date: today,
+      },
+    });
+
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: "No check-in record found for today. Please check-in first!",
+      });
+    }
+
+    if (!attendance.checkIn) {
+      return res.status(400).json({
+        success: false,
+        message: "You haven't checked in today. Please check-in first!",
+      });
+    }
+
+    if (attendance.checkOut) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already checked out today!",
+        data: attendance,
+      });
+    }
+
+    // Calculate overtime
+    const overtime = calculateOvertime(attendance.checkIn, currentTime);
+
+    // Update with check-out
+    await attendance.update({
+      checkOut: currentTime,
+      checkOutNote: note || null,
+      location: location || null,
+      ipAddress: ipAddress || null,
+      deviceInfo: deviceInfo || null,
+      overtime,
+      markedBy: userId,
+      markedByRole: "employee",
+    });
+
+    // Fetch updated attendance
+    const updatedAttendance = await Attendance.findByPk(attendance.id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Check-out successful!",
+      data: {
+        ...updatedAttendance.toJSON(),
+        employee: {
+          id: employee.id,
+          name: employee.name,
+          employeeId: employee.employeeId,
+          designation: employee.designation,
+          department: employee.department,
+          shift: employee.shift,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error during check-out:", error);
+    next(error);
+  }
+};
+
+//! Get today's attendance status for logged-in employee (FIXED with local timezone)
+const getMyTodayAttendance = async (req, res, next) => {
+  try {
+    const employeeId = req.user?.employeeId || req.user?.id;
+    const today = getLocalDate(); // Changed from UTC to local
+
+    const attendance = await Attendance.findOne({
+      where: {
+        employeeId,
+        date: today,
+      },
+    });
+
+    const employee = await Employee.findByPk(employeeId, {
+      attributes: ["id", "name", "employeeId", "designation", "department", "shift"],
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Today's attendance retrieved successfully!",
+      data: {
+        attendance: attendance || null,
+        employee: employee,
+        hasCheckedIn: attendance?.checkIn ? true : false,
+        hasCheckedOut: attendance?.checkOut ? true : false,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting today's attendance:", error);
+    next(error);
+  }
+};
+
+// Also update getDailyAttendanceReport to use local date
+const getDailyAttendanceReport = async (req, res, next) => {
+  try {
+    const { date } = req.query;
+    const targetDate = date || getLocalDate(); // Changed from UTC to local
+
+    const totalEmployees = await Employee.count({
+      where: { status: "active" },
+    });
+
+    const attendanceRecords = await Attendance.findAll({
+      where: { date: targetDate },
+    });
+
+    // ... rest of the code remains the same
+    const allEmployees = await Employee.findAll({
+      where: { status: "active" },
+      attributes: ["id", "name", "employeeId", "designation", "department", "shift"],
+    });
+
+    const attendanceMap = new Map(attendanceRecords.map(record => [record.employeeId, record]));
+
+    const recordsWithEmployees = allEmployees.map(employee => ({
+      ...(attendanceMap.get(employee.id)?.toJSON() || {
+        employeeId: employee.id,
+        date: targetDate,
+        status: "absent",
+        checkIn: null,
+        checkOut: null,
+      }),
+      employee: {
+        id: employee.id,
+        name: employee.name,
+        employeeId: employee.employeeId,
+        designation: employee.designation,
+        department: employee.department,
+        shift: employee.shift,
+      },
+    }));
+
+    const present = recordsWithEmployees.filter(a => a.status === "present").length;
+    const late = recordsWithEmployees.filter(a => a.status === "late").length;
+    const halfDay = recordsWithEmployees.filter(a => a.status === "half-day").length;
+    const absent = recordsWithEmployees.filter(a => a.status === "absent").length;
+
+    return res.status(200).json({
+      success: true,
+      message: "Daily attendance report retrieved successfully!",
+      data: {
+        date: targetDate,
+        totalEmployees,
+        present,
+        absent,
+        late,
+        halfDay,
+        attendanceRate: totalEmployees > 0 ? ((present + late + halfDay) / totalEmployees) * 100 : 0,
+        records: recordsWithEmployees,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting daily attendance report:", error);
+    next(error);
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Helper function to calculate overtime (assuming 8 hours workday)
 const calculateOvertime = (checkIn, checkOut) => {
   if (!checkIn || !checkOut) return 0;
@@ -108,226 +444,6 @@ const markAttendance = async (req, res, next) => {
   }
 };
 
-//! Employee self check-in
-const selfCheckIn = async (req, res, next) => {
-  try {
-    const { note, location, deviceInfo, ipAddress } = req.body;
-    const employeeId = req.user?.employeeId || req.user?.id;
-    const userId = req.user?.id;
-    const today = new Date().toISOString().split("T")[0];
-    const currentTime = new Date().toLocaleTimeString("en-US", { hour12: false });
-
-    if (!employeeId) {
-      return res.status(400).json({
-        success: false,
-        message: "Employee information not found!",
-      });
-    }
-
-    // Check if employee exists
-    const employee = await Employee.findByPk(employeeId);
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: "Employee not found!",
-      });
-    }
-
-    // Check if attendance already exists for today
-    let attendance = await Attendance.findOne({
-      where: {
-        employeeId,
-        date: today,
-      },
-    });
-
-    if (attendance) {
-      // Check if already checked in
-      if (attendance.checkIn) {
-        return res.status(400).json({
-          success: false,
-          message: "You have already checked in today!",
-          data: attendance,
-        });
-      }
-
-      // Update existing record with check-in
-      await attendance.update({
-        checkIn: currentTime,
-        checkInNote: note || null,
-        location: location || null,
-        ipAddress: ipAddress || null,
-        deviceInfo: deviceInfo || null,
-        status: "present",
-        markedBy: userId,
-        markedByRole: "employee",
-      });
-    } else {
-      // Create new attendance record
-      attendance = await Attendance.create({
-        employeeId,
-        date: today,
-        status: "present",
-        checkIn: currentTime,
-        checkInNote: note || null,
-        location: location || null,
-        ipAddress: ipAddress || null,
-        deviceInfo: deviceInfo || null,
-        markedBy: userId,
-        markedByRole: "employee",
-      });
-    }
-
-    // Fetch updated attendance with employee info separately
-    const updatedAttendance = await Attendance.findByPk(attendance.id);
-    
-    return res.status(200).json({
-      success: true,
-      message: "Check-in successful!",
-      data: {
-        ...updatedAttendance.toJSON(),
-        employee: {
-          id: employee.id,
-          name: employee.name,
-          employeeId: employee.employeeId,
-          designation: employee.designation,
-          department: employee.department,
-          shift: employee.shift,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error during check-in:", error);
-    next(error);
-  }
-};
-
-//! Employee self check-out
-const selfCheckOut = async (req, res, next) => {
-  try {
-    const { note, location, deviceInfo, ipAddress } = req.body;
-    const employeeId = req.user?.employeeId || req.user?.id;
-    const userId = req.user?.id;
-    const today = new Date().toISOString().split("T")[0];
-    const currentTime = new Date().toLocaleTimeString("en-US", { hour12: false });
-
-    if (!employeeId) {
-      return res.status(400).json({
-        success: false,
-        message: "Employee information not found!",
-      });
-    }
-
-    // Check if employee exists
-    const employee = await Employee.findByPk(employeeId);
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: "Employee not found!",
-      });
-    }
-
-    // Find today's attendance
-    const attendance = await Attendance.findOne({
-      where: {
-        employeeId,
-        date: today,
-      },
-    });
-
-    if (!attendance) {
-      return res.status(404).json({
-        success: false,
-        message: "No check-in record found for today. Please check-in first!",
-      });
-    }
-
-    if (!attendance.checkIn) {
-      return res.status(400).json({
-        success: false,
-        message: "You haven't checked in today. Please check-in first!",
-      });
-    }
-
-    if (attendance.checkOut) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already checked out today!",
-        data: attendance,
-      });
-    }
-
-    // Calculate overtime
-    const overtime = calculateOvertime(attendance.checkIn, currentTime);
-
-    // Update with check-out
-    await attendance.update({
-      checkOut: currentTime,
-      checkOutNote: note || null,
-      location: location || null,
-      ipAddress: ipAddress || null,
-      deviceInfo: deviceInfo || null,
-      overtime,
-      markedBy: userId,
-      markedByRole: "employee",
-    });
-
-    // Fetch updated attendance
-    const updatedAttendance = await Attendance.findByPk(attendance.id);
-
-    return res.status(200).json({
-      success: true,
-      message: "Check-out successful!",
-      data: {
-        ...updatedAttendance.toJSON(),
-        employee: {
-          id: employee.id,
-          name: employee.name,
-          employeeId: employee.employeeId,
-          designation: employee.designation,
-          department: employee.department,
-          shift: employee.shift,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Error during check-out:", error);
-    next(error);
-  }
-};
-
-//! Get today's attendance status for logged-in employee
-const getMyTodayAttendance = async (req, res, next) => {
-  try {
-    const employeeId = req.user?.employeeId || req.user?.id;
-    const today = new Date().toISOString().split("T")[0];
-
-    const attendance = await Attendance.findOne({
-      where: {
-        employeeId,
-        date: today,
-      },
-    });
-
-    const employee = await Employee.findByPk(employeeId, {
-      attributes: ["id", "name", "employeeId", "designation", "department", "shift"],
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Today's attendance retrieved successfully!",
-      data: {
-        attendance: attendance || null,
-        employee: employee,
-        hasCheckedIn: attendance?.checkIn ? true : false,
-        hasCheckedOut: attendance?.checkOut ? true : false,
-      },
-    });
-  } catch (error) {
-    console.error("Error getting today's attendance:", error);
-    next(error);
-  }
-};
 
 //! Get attendance by date range (for admin)
 const getAttendanceByDateRange = async (req, res, next) => {
@@ -456,76 +572,6 @@ const getEmployeeAttendanceSummary = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error getting employee attendance summary:", error);
-    next(error);
-  }
-};
-
-//! Get daily attendance report (for admin dashboard)
-const getDailyAttendanceReport = async (req, res, next) => {
-  try {
-    const { date } = req.query;
-    const targetDate = date || new Date().toISOString().split("T")[0];
-
-    const totalEmployees = await Employee.count({
-      where: { status: "active" },
-    });
-
-    const attendanceRecords = await Attendance.findAll({
-      where: { date: targetDate },
-    });
-
-    // Get all employee IDs from attendance
-    const employeeIds = attendanceRecords.map(record => record.employeeId);
-    
-    // Fetch all active employees
-    const allEmployees = await Employee.findAll({
-      where: { status: "active" },
-      attributes: ["id", "name", "employeeId", "designation", "department", "shift"],
-    });
-
-    // Create map of attendance records by employee ID
-    const attendanceMap = new Map(attendanceRecords.map(record => [record.employeeId, record]));
-
-    // Combine attendance with employee details
-    const recordsWithEmployees = allEmployees.map(employee => ({
-      ...(attendanceMap.get(employee.id)?.toJSON() || {
-        employeeId: employee.id,
-        date: targetDate,
-        status: "absent",
-        checkIn: null,
-        checkOut: null,
-      }),
-      employee: {
-        id: employee.id,
-        name: employee.name,
-        employeeId: employee.employeeId,
-        designation: employee.designation,
-        department: employee.department,
-        shift: employee.shift,
-      },
-    }));
-
-    const present = recordsWithEmployees.filter(a => a.status === "present").length;
-    const late = recordsWithEmployees.filter(a => a.status === "late").length;
-    const halfDay = recordsWithEmployees.filter(a => a.status === "half-day").length;
-    const absent = recordsWithEmployees.filter(a => a.status === "absent").length;
-
-    return res.status(200).json({
-      success: true,
-      message: "Daily attendance report retrieved successfully!",
-      data: {
-        date: targetDate,
-        totalEmployees,
-        present,
-        absent,
-        late,
-        halfDay,
-        attendanceRate: totalEmployees > 0 ? ((present + late + halfDay) / totalEmployees) * 100 : 0,
-        records: recordsWithEmployees,
-      },
-    });
-  } catch (error) {
-    console.error("Error getting daily attendance report:", error);
     next(error);
   }
 };

@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const BrotherEnterprise = require("../models/Authentication/brotherEnterprise.model");
+const Employee = require("../models/employee/employee.model");
 
 const verifyJWT = (req, res, next) => {
   const authHeader = req.headers?.authorization || req.headers?.Authorization;
@@ -32,7 +33,7 @@ const verifyJWT = (req, res, next) => {
       }
       
       try {
-        const user = await BrotherEnterprise.findOne({ 
+        const user = await Employee.findOne({ 
           where: { id: decoded.id },
           attributes: { exclude: ['password'] }
         });
