@@ -6,7 +6,7 @@ const smsSendingRoutes = require("../routes/sms.routes");
 const paymentRoutes = require("../routes/payment.routes");
 const employeeRoutes = require("../routes/employee/employee.routes");
 const attendanceRoutes = require("../routes/attendance/attendance.routes");
-
+const wifiIpConfigRoutes = require("../routes/employee/wifiIpConfig.routes");
 
 const uploadWithMulter = require("../middleware/uploadWithMulter");
 
@@ -16,6 +16,8 @@ const router = require("express").Router();
 router.use("/authentication", authenticationRoutes);
 
 router.use("/employees", employeeRoutes);
+
+router.use("/wifi-ip-config", wifiIpConfigRoutes);
 
 router.use("/sms-configurations", smsConfigurationRoutes);
 
