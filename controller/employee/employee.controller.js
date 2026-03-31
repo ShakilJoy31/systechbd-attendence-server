@@ -579,6 +579,77 @@ const searchEmployees = async (req, res, next) => {
   }
 };
 
+
+// controller/employee/employee.controller.js - Add this function
+
+//! Change employee password (Simplified version)
+const changeEmployeePassword = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { currentPassword, newPassword, confirmNewPassword } = req.body;
+
+    // Validate required fields
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "All password fields are required!",
+      });
+    }
+
+    // Check if new password matches confirm password
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password and confirm password do not match!",
+      });
+    }
+
+    // Check if new password is different from current password
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be different from current password!",
+      });
+    }
+
+    // Check if employee exists
+    const employee = await Employee.findOne({ where: { id } });
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee not found!",
+      });
+    }
+
+    // Verify current password (simple comparison since no hashing)
+    if (employee.password !== currentPassword) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect!",
+      });
+    }
+
+    // Update employee password directly
+    await Employee.update(
+      {
+        password: newPassword,
+        updatedBy: req.user?.id || null,
+      },
+      { where: { id } }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully!",
+    });
+  } catch (error) {
+    console.error("Error changing employee password:", error);
+    next(error);
+  }
+};
+
+
+
 module.exports = {
   createEmployee,
   getAllEmployees,
@@ -589,4 +660,5 @@ module.exports = {
   bulkImportEmployees,
   getEmployeeStats,
   searchEmployees,
+  changeEmployeePassword
 };

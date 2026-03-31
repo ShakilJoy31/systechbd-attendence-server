@@ -11,6 +11,7 @@ const {
   bulkImportEmployees,
   getEmployeeStats,
   searchEmployees,
+  changeEmployeePassword,
 } = require("../../controller/employee/employee.controller");
 const verifyJWT = require("../../middleware/verifyJWT");
 
@@ -27,5 +28,7 @@ router.put("/update-employee-status/:id", verifyJWT, updateEmployeeStatus);
 router.post("/bulk-import-employees", verifyJWT, bulkImportEmployees);
 router.get("/stats", verifyJWT, getEmployeeStats);
 router.get("/search", verifyJWT, searchEmployees);
+
+router.put("/change-password/:id", verifyJWT, changeEmployeePassword);
 
 module.exports = router;
