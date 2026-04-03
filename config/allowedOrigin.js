@@ -6,10 +6,10 @@ const allowedOrigins = [
 
   
   "http://localhost:3001",
-  "https://attendence.srsbuzz.com",
-  "http://attendence.srsbuzz.com",
-  "https://www.attendence.srsbuzz.com",
-  "http://www.attendence.srsbuzz.com",
+  "https://attendence.linuxeon.com",
+  "http://attendence.linuxeon.com",
+  "https://www.attendence.linuxeon.com",
+  "http://www.attendence.linuxeon.com",
   "http://localhost:2000"
 ];
 
